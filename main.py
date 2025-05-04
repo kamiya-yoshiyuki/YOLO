@@ -13,6 +13,8 @@ app = FastAPI()
 model = YOLO("yolov8n.pt")  # または fine-tuned モデルパス
 import imghdr
 
+from ultralytics.utils.plotting import Annotator  # YOLOv8が内部で使っている描画ユーティリティ
+
 @app.post("/predict/")
 async def predict_image(file: UploadFile = File(...)):
     suffix = os.path.splitext(file.filename)[1]
@@ -21,39 +23,27 @@ async def predict_image(file: UploadFile = File(...)):
         temp_input_path = temp_input.name
 
     try:
-        # オリジナル画像を読み込み
+        # オリジナル画像を読み込む
         image = cv2.imread(temp_input_path)
         original_h, original_w = image.shape[:2]
 
-        # YOLOの推論に適したサイズ（縦横比維持で最大サイズに収める）
-        target_size = 640
-        scale = min(target_size / original_w, target_size / original_h)
-        resized_w, resized_h = int(original_w * scale), int(original_h * scale)
-        resized = cv2.resize(image, (resized_w, resized_h))
-
-        # 黒背景で padding（640x640 にしてモデルに渡す）
-        padded = cv2.copyMakeBorder(
-            resized,
-            top=(target_size - resized_h) // 2,
-            bottom=(target_size - resized_h + 1) // 2,
-            left=(target_size - resized_w) // 2,
-            right=(target_size - resized_w + 1) // 2,
-            borderType=cv2.BORDER_CONSTANT,
-            value=[0, 0, 0],
-        )
-        cv2.imwrite(temp_input_path, padded)
-
-        # 推論
+        # 推論（YOLOv8は内部でリサイズ処理を行うため、ここではそのまま渡してOK）
         results = model(temp_input_path)
-        result_img = results[0].plot()
+        result = results[0]
 
-        # 推論結果画像をオリジナルサイズに戻す
-        result_img_resized = cv2.resize(result_img, (original_w, original_h))
+        # 元画像に描画
+        annotator = Annotator(image)
+        for box in result.boxes:
+            xyxy = box.xyxy[0].cpu().numpy().astype(int)  # bbox座標
+            cls = int(box.cls[0])
+            label = model.names[cls]
+            annotator.box_label(xyxy, label)
 
-        # 保存してBase64に変換
+        result_img = annotator.result()  # numpy配列で取得
+
+        # Base64変換して返却
         result_path = temp_input_path.replace(suffix, "_result.jpg")
-        cv2.imwrite(result_path, result_img_resized)
-
+        cv2.imwrite(result_path, result_img)
         with open(result_path, "rb") as f:
             image_bytes = f.read()
         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
@@ -65,4 +55,5 @@ async def predict_image(file: UploadFile = File(...)):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
