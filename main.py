@@ -1,47 +1,47 @@
-import os
-import uuid
+import io
 import base64
-import cv2
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
-from ultralytics import YOLO  # YOLOv8など
-from tempfile import NamedTemporaryFile
+from PIL import Image
+from ultralytics import YOLO
+import cv2
 
 app = FastAPI()
+model = YOLO("yolov8n.pt")
 
-# YOLOモデルを読み込み（キャッシュされる）
-model = YOLO("yolov8n.pt")  # または fine-tuned モデルパス
+# ✅ アスペクト比維持のletterbox（メモリ処理）
+def letterbox_image(image, size=(640, 640), color=(114, 114, 114)):
+    iw, ih = image.size
+    w, h = size
+    scale = min(w / iw, h / ih)
+    nw, nh = int(iw * scale), int(ih * scale)
+    image_resized = image.resize((nw, nh), Image.BILINEAR)
+
+    new_image = Image.new('RGB', size, color)
+    new_image.paste(image_resized, ((w - nw) // 2, (h - nh) // 2))
+    return new_image
 
 @app.post("/predict/")
 async def predict_image(file: UploadFile = File(...)):
-    # 一時ファイルに保存
-    suffix = os.path.splitext(file.filename)[1]
-    with NamedTemporaryFile(delete=False, suffix=suffix) as temp_input:
-        temp_input.write(await file.read())
-        temp_input_path = temp_input.name
-
     try:
-        # 📌 大きな画像をリサイズ（例: 最大640x640に縮小）
-        image = cv2.imread(temp_input_path)
-        resized = cv2.resize(image, (640, 640))  # 必要に応じて変更
-        cv2.imwrite(temp_input_path, resized)
+        # 📥 画像読み込み（メモリ上）
+        image_bytes = await file.read()
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 🔍 推論を実行（YOLOv8など）
-        results = model(temp_input_path)
-        result_img = results[0].plot()  # 検出結果を画像に描画
+        # 🔄 アスペクト比維持でリサイズ
+        resized_image = letterbox_image(image)
 
-        # 🔄 結果画像を一時ファイルに保存
-        result_path = temp_input_path.replace(suffix, f"_result.jpg")
-        cv2.imwrite(result_path, result_img)
+        # ➡️ PIL → NumPy (YOLO入力形式)
+        img_np = np.array(resized_image)[:, :, ::-1]  # RGB→BGR
 
-        # 🔁 Base64形式に変換して返却
-        with open(result_path, "rb") as f:
-            image_bytes = f.read()
-        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+        # 🔍 YOLO推論
+        results = model(img_np)
+        result_img = results[0].plot()
 
-        # 🧹 クリーンアップ
-        os.remove(temp_input_path)
-        os.remove(result_path)
+        # 🔁 推論結果をエンコード（Base64）
+        _, buffer = cv2.imencode('.jpg', result_img)
+        encoded_image = base64.b64encode(buffer).decode("utf-8")
 
         return JSONResponse(content={"image_base64": encoded_image})
     
