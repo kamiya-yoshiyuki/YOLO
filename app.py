@@ -3,7 +3,7 @@ import base64
 import streamlit as st
 
 st.title("物体検出アプリ")
-uploaded_file = st.file_uploader("画像を選択してください", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("画像を選択してください", type=["png", "jpg", "jpeg", "JPG", "JPEG", "PNG"])
 
 if uploaded_file is not None:
     st.image(uploaded_file, caption="アップロード画像", use_container_width=True)
