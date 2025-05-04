@@ -6,12 +6,12 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from ultralytics import YOLO  # YOLOv8など
 from tempfile import NamedTemporaryFile
+from ultralytics.utils.plotting import Annotator, colors
 
 app = FastAPI()
 
 # YOLOモデルを読み込み（キャッシュされる）
 model = YOLO("yolov8n.pt")  # または fine-tuned モデルパス
-import imghdr
 
 from ultralytics.utils.plotting import Annotator  # YOLOv8が内部で使っている描画ユーティリティ
 
@@ -34,10 +34,12 @@ async def predict_image(file: UploadFile = File(...)):
         # 元画像に描画
         annotator = Annotator(image)
         for box in result.boxes:
-            xyxy = box.xyxy[0].cpu().numpy().astype(int)  # bbox座標
+            xyxy = box.xyxy[0].cpu().numpy().astype(int)
             cls = int(box.cls[0])
-            label = model.names[cls]
-            annotator.box_label(xyxy, label)
+            conf = float(box.conf[0])
+            label = f"{model.names[cls]} {conf:.2f}"
+            color = colors(cls)  # ← YOLOv8標準のクラスごとの色
+            annotator.box_label(xyxy, label, color=color)
 
         result_img = annotator.result()  # numpy配列で取得
 
